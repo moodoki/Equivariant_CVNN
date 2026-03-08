@@ -14,7 +14,6 @@ from sklearn.metrics import classification_report
 from sklearn.decomposition import PCA
 import pandas as pd
 import os
-import wandb
 from collections.abc import MutableMapping
 import plotly.graph_objects as go
 import umap
@@ -23,6 +22,16 @@ import plotly.express as px
 
 MIN_VALUE = 0.02
 MAX_VALUE = 40
+
+
+def _log_image(logger, name: str, image_or_path, caption=None) -> None:
+    if logger and hasattr(logger, "log_image"):
+        logger.log_image(name, image_or_path, caption=caption)
+
+
+def _log_figure(logger, name: str, figure) -> None:
+    if logger and hasattr(logger, "log_figure"):
+        logger.log_figure(name, figure)
 
 
 def pauli_transform(sar_img: np.ndarray) -> np.ndarray:
@@ -768,16 +777,13 @@ def plot_segmentation_images(
     plt.savefig(path, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-    # Log to Weights & Biases if enabled
+    # Log through the configured experiment logger if enabled.
     if wandb_log:
-        wandb.log(
-            {
-                "segmentation_images": [
-                    wandb.Image(
-                        path, caption="Segmentation Images and Confusion Matrix"
-                    )
-                ]
-            }
+        _log_image(
+            wandb_log,
+            "segmentation_images",
+            path,
+            caption="Segmentation Images and Confusion Matrix",
         )
 
 
@@ -851,16 +857,13 @@ def plot_classification_images(
     plt.savefig(path, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-    # Log to Weights & Biases if enabled
+    # Log through the configured experiment logger if enabled.
     if wandb_log:
-        wandb.log(
-            {
-                "classification_images": [
-                    wandb.Image(
-                        path, caption="Classification Images and Confusion Matrix"
-                    )
-                ]
-            }
+        _log_image(
+            wandb_log,
+            "classification_images",
+            path,
+            caption="Classification Images and Confusion Matrix",
         )
 
 
@@ -912,9 +915,14 @@ def plot_synchrony_images(
     plt.savefig(path, bbox_inches="tight", pad_inches=0.1)
     plt.close()
 
-    # Log to Weights & Biases if enabled
+    # Log through the configured experiment logger if enabled.
     if wandb_log:
-        wandb.log({"synchrony_images": [wandb.Image(path, caption="Synchrony Images")]})
+        _log_image(
+            wandb_log,
+            "synchrony_images",
+            path,
+            caption="Synchrony Images",
+        )
 
 
 def plot_reconstruction_polsar_images(
@@ -1069,15 +1077,11 @@ def plot_reconstruction_polsar_images(
     plt.close()
 
     if wandb_log:
-        wandb.log(
-            {
-                "reconstruction_images": [
-                    wandb.Image(
-                        f"{logdir}/reconstruction_images.png",
-                        caption="Reconstruction Images",
-                    )
-                ]
-            }
+        _log_image(
+            wandb_log,
+            "reconstruction_images",
+            path,
+            caption="Reconstruction Images",
         )
 
 
@@ -1143,14 +1147,11 @@ def plot_projection_interactive(
     plt.close()
 
     if wandb_log:
-        wandb.log(
-            {
-                "histogram_coefficients_poly_function": [
-                    wandb.Image(
-                        str(path_hist), caption="Histogram Coefficients Poly Function"
-                    )
-                ]
-            }
+        _log_image(
+            wandb_log,
+            "histogram_coefficients_poly_function",
+            str(path_hist),
+            caption="Histogram Coefficients Poly Function",
         )
 
     # Convert to numpy arrays
@@ -1159,10 +1160,10 @@ def plot_projection_interactive(
     Z_np = torch.tensor(Z).numpy()
 
     # Create a Plotly surface plot in polar coordinates
-    fig = go.Figure(data=[go.Surface(z=Z_np, x=R_np, y=Theta_np)])
+    fig_polar = go.Figure(data=[go.Surface(z=Z_np, x=R_np, y=Theta_np)])
 
     # Add labels and title
-    fig.update_layout(
+    fig_polar.update_layout(
         title="Projection of Z as a function of Amplitude (R) and Phase (Theta)",
         scene=dict(
             xaxis_title="Amplitude (R)",
@@ -1174,17 +1175,17 @@ def plot_projection_interactive(
     path_html_polar = path / "projection_polar.html"
 
     # Save the plot as an interactive HTML file
-    fig.write_html(path_html_polar)
+    fig_polar.write_html(path_html_polar)
 
     # Convert to numpy arrays
     X_np = X.numpy()
     Y_np = Y.numpy()
 
     # Create a Plotly surface plot
-    fig = go.Figure(data=[go.Surface(z=Z_np, x=X_np, y=Y_np)])
+    fig_parts = go.Figure(data=[go.Surface(z=Z_np, x=X_np, y=Y_np)])
 
     # Add labels and title
-    fig.update_layout(
+    fig_parts.update_layout(
         title="Projection of Z as a function of X and Y",
         scene=dict(
             xaxis_title="X axis", yaxis_title="Y axis", zaxis_title="Z axis (Projected)"
@@ -1194,11 +1195,11 @@ def plot_projection_interactive(
     path_html_parts = path / "projection_parts.html"
 
     # Save the plot as an interactive HTML file
-    fig.write_html(path_html_parts)
+    fig_parts.write_html(path_html_parts)
 
     if wandb_log:
-        wandb.log({f"projection_polar": wandb.Html(str(path_html_polar))})
-        wandb.log({f"projection_parts": wandb.Html(str(path_html_parts))})
+        _log_figure(wandb_log, "projection_polar", fig_polar)
+        _log_figure(wandb_log, "projection_parts", fig_parts)
 
 
 def plot_latent_features(
@@ -1446,7 +1447,7 @@ def visualize_latent_space(
     fig.write_html(str(path_html))
     print(f"Visualization saved as {path_html}")
 
-    # Log to Weights & Biases if required
+    # Log through the configured experiment logger if enabled.
     if wandb_log:
-        wandb.log({f"umap": wandb.Html(str(path_html))})
-        print("Visualization logged to Weights & Biases.")
+        _log_figure(wandb_log, "umap", fig)
+        print("Visualization logged through the experiment logger.")

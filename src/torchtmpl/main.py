@@ -5,13 +5,12 @@ import logging
 import sys
 import pathlib
 import random
-from os import path, makedirs
 import copy
+from os import path, makedirs
 from typing import Union
 
 # External imports
 import yaml
-import wandb
 import torch
 import numpy as np
 import math
@@ -27,6 +26,7 @@ from . import models
 from . import optim
 from . import utils
 from . import visualisation as vis
+from .logging_backends import build_experiment_logger
 import torchtmpl as tl
 from torchtmpl.models.projection import PolyCtoR, MLPCtoR, NoCtoR, ModCtoR
 from torchtmpl.models.softmax import Softmax, SoftmaxMeanCtoR, SoftmaxProductCtoR
@@ -122,97 +122,34 @@ def init_model(
     return model, shift_eq, shift_inv, task
 
 
-def configure_wandb_logging(config: dict) -> None:
-    """
-    Configure and initialize Weights & Biases (wandb) logging.
-    """
-    if "wandb" in config["logging"]:
-        wandb_config = config["logging"]["wandb"]
-        project_name = wandb_config["project"]
-        entity_name = wandb_config["entity"]
-        run_id = wandb_config.get("run_id")
-
-        if config["pretrained"]:
-            wandb.init(
-                project=project_name, entity=entity_name, resume="must", id=run_id
-            )
-            wandb_log = wandb.log
-        else:
-            config_cp = copy.deepcopy(config)
-            config_cp = remove_wandb_tags(config_cp)
-            tags = generate_tags(config_cp)
-
-            # Ensure tags are limited to 64 characters
-            tags = [tag if len(tag) <= 64 else tag[:61] + "..." for tag in tags]
-
-            wandb.init(
-                project=project_name, entity=entity_name, config=config_cp, tags=tags
-            )
-            config_cp["logging"]["wandb"]["run_id"] = wandb.run.id
-            config["logging"]["wandb"]["run_id"] = wandb.run.id
-            wandb_log = wandb.log
-            wandb_log(config_cp)
-        logging.info(f"Will be recording in wandb run name: {wandb.run.name}")
-    else:
-        wandb_log = None
-
-    return wandb_log
-
-
 def flatten_config(config, parent_key="", sep="."):
-    """
-    Recursively flattens a nested dictionary by concatenating keys.
-
-    Args:
-        config (dict): The configuration dictionary to flatten.
-        parent_key (str): The base key to use for concatenation (used in recursion).
-        sep (str): The separator to use between concatenated keys.
-
-    Returns:
-        dict: A flattened dictionary where nested keys are concatenated.
-    """
     items = []
 
     for key, value in config.items():
-        # Handle keys containing the separator character
         if sep in key:
             key = key.replace(sep, f"_{sep}_")
 
         new_key = f"{parent_key}{sep}{key}" if parent_key else key
 
-        # Recursively flatten dictionaries
         if isinstance(value, dict):
-            if value:  # Skip empty dictionaries
+            if value:
                 items.extend(flatten_config(value, new_key, sep=sep).items())
         elif isinstance(value, (list, tuple)):
-            # Join list/tuple elements into a string for better representation
             items.append((new_key, ", ".join(map(str, value))))
         elif value is None:
-            # Handle None values
             items.append((new_key, "None"))
         else:
-            # Convert other types of values to strings
             items.append((new_key, str(value)))
 
     return dict(items)
 
 
 def generate_tags(config):
-    """
-    Generates a list of formatted tags from a dynamic config dictionary.
-
-    Args:
-        config (dict): The configuration dictionary.
-
-    Returns:
-        list: A list of formatted tags in the form of "key: value".
-    """
     flat_config = flatten_config(config)
-    tags = [f"{key}: {value}" for key, value in flat_config.items()]
-    return tags
+    return [f"{key}: {value}" for key, value in flat_config.items()]
 
 
-def remove_wandb_tags(config) -> None:
+def remove_wandb_tags(config) -> dict:
     model_class = config["model"]["class"]
 
     if ("AutoEncoder" and not "WD") or "ResNet" not in model_class:
@@ -238,6 +175,19 @@ def remove_wandb_tags(config) -> None:
     config.pop("world_size", None)
 
     return config
+
+
+def configure_experiment_logger(config: dict):
+    tracking_config = remove_wandb_tags(copy.deepcopy(config))
+    tags = generate_tags(tracking_config)
+    tags = [tag if len(tag) <= 64 else tag[:61] + "..." for tag in tags]
+    logger = build_experiment_logger(config, tracking_config, tags)
+    logging.info(
+        "Experiment logger backend: %s%s",
+        logger.backend_name,
+        f" ({logger.run_name})" if logger.run_name else "",
+    )
+    return logger
 
 
 def load_config(config_path: str, command: str) -> dict:
@@ -293,8 +243,7 @@ def load(config: dict) -> tuple:
         raise ValueError(f"Unknown dtype: {dtype_str}")
 
     config["model"]["projection"]["softmax"] = type(softmax).__name__
-
-    wandb_log = configure_wandb_logging(config)
+    experiment_logger = configure_experiment_logger(config)
 
     # Load the checkpoint if needed
     if config["pretrained"]:
@@ -382,7 +331,7 @@ def load(config: dict) -> tuple:
         epoch = 1
 
     # Configure logging directory
-    logdir = configure_logging_directory(log_path, config)
+    logdir = configure_logging_directory(log_path, config, experiment_logger)
     config["logging"]["logdir"] = str(logdir)
 
     logging.info(f"Will be logging into {logdir}")
@@ -392,9 +341,19 @@ def load(config: dict) -> tuple:
     with open(logdir / "config.yml", "w") as file:
         yaml.dump(config, file)
 
+    experiment_logger.log_config(config)
+
     # Generate and save summary
     save_model_summary(
-        model, train_loader, valid_loader, loss, config, logdir, input_size, dtype=dtype
+        model,
+        train_loader,
+        valid_loader,
+        loss,
+        config,
+        logdir,
+        experiment_logger,
+        input_size,
+        dtype=dtype,
     )
 
     return (
@@ -409,7 +368,7 @@ def load(config: dict) -> tuple:
         num_classes,
         ignore_index,
         epoch,
-        wandb_log,
+        experiment_logger,
         input_size,
         projection,
         softmax,
@@ -417,7 +376,9 @@ def load(config: dict) -> tuple:
     )
 
 
-def configure_logging_directory(log_path: str, config: dict) -> pathlib.Path:
+def configure_logging_directory(
+    log_path: str, config: dict, experiment_logger
+) -> pathlib.Path:
     """
     Configure the logging directory based on the configuration.
     """
@@ -428,8 +389,8 @@ def configure_logging_directory(log_path: str, config: dict) -> pathlib.Path:
     if config["pretrained"]:
         logdir = pathlib.Path(log_path)
     else:
-        if "wandb" in config["logging"]:
-            logdir = log_path + "/" + logname + "_" + wandb.run.name
+        if experiment_logger.uses_legacy_wandb_api() and experiment_logger.run_name:
+            logdir = log_path + "/" + logname + "_" + experiment_logger.run_name
         else:
             logdir = pathlib.Path(utils.generate_unique_logpath(log_path, logname))
         if not path.isdir(logdir):
@@ -462,20 +423,23 @@ def save_model_summary(
     loss: nn.Module,
     config: dict,
     logdir: pathlib.Path,
+    experiment_logger,
     input_size: tuple,
     dtype,
 ) -> None:
     """
     Save a summary of the model architecture and configuration to the logging directory.
     """
+    logger_section = ""
+    if experiment_logger.is_enabled():
+        logger_section = f"{experiment_logger.backend_name.title()} run name: {experiment_logger.run_name}\n\n"
+
     summary_text = (
         f"Logdir: {logdir}\n"
         "## Command\n"
         f"{' '.join(sys.argv)}\n\n"
         f"Config: {config}\n\n"
-        f"Wandb run name: {wandb.run.name}\n\n"
-        if config.get("wandb")
-        else ""
+        f"{logger_section}"
         "## Summary of the model architecture\n"
         f"{torchinfo.summary(model, input_size=input_size, dtypes=[dtype])}\n\n"
         f"{model}\n\n"
@@ -490,8 +454,7 @@ def save_model_summary(
         file.write(summary_text)
 
     logging.info(summary_text)
-    if config.get("wandb"):
-        wandb.log({"summary": summary_text})
+    experiment_logger.log_summary(summary_text)
 
 
 def retrain(params: list) -> None:
@@ -538,7 +501,7 @@ def train(params: Union[list, dict], log_file=None) -> None:
         num_classes,
         ignore_index,
         epoch,
-        wandb_log,
+        experiment_logger,
         input_size,
         projection,
         softmax,
@@ -631,9 +594,11 @@ def train(params: Union[list, dict], log_file=None) -> None:
         )
 
         log_images_and_metrics(
-            wandb_log,
+            experiment_logger,
             metrics,
         )
+
+    experiment_logger.finish()
 
 
 def save_checkpoint(
@@ -674,25 +639,13 @@ def save_checkpoint(
 
 
 def log_images_and_metrics(
-    wandb_log: bool,
+    experiment_logger,
     metrics: dict,
 ) -> None:
 
-    if wandb_log:
-        logging.info("Logging to WandB")
-
-        # Prepare a dictionary for logging
-        log_data = {}
-        for key, value in metrics.items():
-            if isinstance(value, (list, tuple)) or hasattr(
-                value, "__iter__"
-            ):  # Check if value is an array-like
-                log_data[key] = wandb.Histogram(value)
-            else:
-                log_data[key] = value
-
-        # Log to WandB
-        wandb.log(log_data)
+    if experiment_logger.is_enabled():
+        logging.info("Logging metrics to %s", experiment_logger.backend_name.title())
+        experiment_logger.log_metrics(metrics, step=metrics.get("epoch"))
 
     # Clear CUDA cache
     torch.cuda.empty_cache()
@@ -725,7 +678,7 @@ def test(params: list) -> None:
 
     assert config["pretrained"], "No pretrained model available"
 
-    wandb_log = configure_wandb_logging(config)
+    experiment_logger = configure_experiment_logger(config)
 
     seed = config["seed"]
     seed_everything(seed)
@@ -798,6 +751,7 @@ def test(params: list) -> None:
 
     logdir = pathlib.Path(log_path)
     logging.info(f"Will be logging into {logdir}")
+    experiment_logger.log_config(config)
 
     _, _, task = get_model_properties(config=config)
 
@@ -812,7 +766,7 @@ def test(params: list) -> None:
     )
     metrics.update(res)
 
-    log_images_and_metrics(wandb_log, metrics)
+    log_images_and_metrics(experiment_logger, metrics)
 
     if (
         isinstance(test_loader.dataset.dataset, (PolSFDataset, ALOSDataset, Bretigny))
@@ -886,7 +840,7 @@ def test(params: list) -> None:
                 projection.poly,
                 path=logdir,
                 order=projection.order,
-                wandb_log=wandb_log,
+                wandb_log=experiment_logger,
                 range_values=range_values,
                 device=device,
             )
@@ -896,7 +850,7 @@ def test(params: list) -> None:
                 latent_features,
                 labels,
                 path=logdir,
-                wandb_log=wandb_log,
+                wandb_log=experiment_logger,
                 ignore_index=ignore_index,
             )
 
@@ -981,14 +935,14 @@ def test(params: list) -> None:
                 number_classes=num_classes,
                 ignore_index=ignore_index,
                 logdir=logdir,
-                wandb_log=wandb_log,
+                wandb_log=experiment_logger,
                 sets_masks=sets_masks,
             )
         elif task == "reconstruction":
             vis.plot_reconstruction_polsar_images(
                 to_be_vizualized=to_be_vizualized,
                 logdir=logdir,
-                wandb_log=wandb_log,
+                wandb_log=experiment_logger,
                 dtype=dtype,
             )
 
@@ -996,7 +950,7 @@ def test(params: list) -> None:
         vis.plot_classification_images(
             to_be_vizualized=to_be_vizualized,
             logdir=logdir,
-            wandb_log=wandb_log,
+            wandb_log=experiment_logger,
             confusion_matrix=cm,
             number_classes=num_classes,
             dtype=dtype,
@@ -1008,8 +962,10 @@ def test(params: list) -> None:
             number_classes=num_classes,
             ignore_index=ignore_index,
             logdir=logdir,
-            wandb_log=wandb_log,
+            wandb_log=experiment_logger,
         )
+
+    experiment_logger.finish()
 
 
 def validate_shift_invariance(
