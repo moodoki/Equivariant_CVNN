@@ -557,18 +557,28 @@ def prepare_polsfdataset(
 
 
 def compute_class_weights(train_dataset, num_classes, ignore_index):
-    if isinstance(train_dataset[0][1], int):
+    label_sample = train_dataset[0][1]
+
+    if isinstance(label_sample, (int, np.integer)):
         all_labels = torch.tensor(
-            [train_dataset[idx][1] for idx in range(len(train_dataset))]
+            [int(train_dataset[idx][1]) for idx in range(len(train_dataset))],
+            dtype=torch.long,
         )
-    elif isinstance(train_dataset[0][1], (torch.Tensor, np.ndarray)):
+    elif isinstance(label_sample, torch.Tensor):
+        all_labels = torch.cat(
+            [train_dataset[idx][1].flatten().to(torch.long) for idx in range(len(train_dataset))]
+        )
+    elif isinstance(label_sample, np.ndarray):
         all_labels = torch.cat(
             [
-                torch.from_numpy(train_dataset[idx][1].flatten())
+                torch.from_numpy(train_dataset[idx][1].flatten()).to(torch.long)
                 for idx in range(len(train_dataset))
             ]
         )
-    class_counts = torch.bincount(all_labels)
+    else:
+        raise TypeError(f"Unsupported label type for class weights: {type(label_sample)!r}")
+
+    class_counts = torch.bincount(all_labels, minlength=num_classes)
 
     if ignore_index > 0:
         # Exclude the count of the unlabeled class if necessary (assuming class 0 is unlabeled)
