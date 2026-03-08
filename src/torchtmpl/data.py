@@ -2,6 +2,7 @@ import numpy as np
 import logging
 import random
 import pathlib
+import inspect
 from os import path, listdir
 import shutil
 
@@ -12,8 +13,18 @@ from torch.utils.data import DataLoader, Subset, Dataset
 from sklearn.model_selection import train_test_split
 from sklearn.cluster import KMeans
 from torchcvnn.datasets import ALOSDataset, PolSFDataset, Bretigny, S1SLC
-from torchcvnn.transforms import FFTResize, PolSARtoTensor, ToTensor, Unsqueeze
+from torchcvnn.transforms import FFTResize, ToTensor, Unsqueeze
 import torchvision
+
+try:
+    from torchcvnn.transforms import PolSARtoTensor
+except ImportError:
+    PolSARtoTensor = None
+
+try:
+    from torchcvnn.transforms import PolSAR
+except ImportError:
+    PolSAR = None
 
 # Constants for ignore index
 IGNORE_INDEX = -100
@@ -90,9 +101,9 @@ def get_transform_instance(transform_name, name_dataset, size):
     transform_instances = []
 
     if name_dataset in ["PolSFDataset", "Bretigny", "S1SLC", "ALOSDataset"]:
-        transform_instances.append(PolSARtoTensor())
+        transform_instances.append(build_polsar_to_tensor_transform(name_dataset))
 
-    transform_instances.append(ToTensor())
+    transform_instances.append(build_to_tensor_transform())
 
     if name_dataset == "S1SLC":
         transform_instances.append(
@@ -114,6 +125,26 @@ def get_transform_instance(transform_name, name_dataset, size):
         return torchvision.transforms.Compose(transform_instances)
     else:
         return transform_instances[0]
+
+
+def build_polsar_to_tensor_transform(name_dataset: str):
+    if PolSARtoTensor is not None:
+        return PolSARtoTensor()
+
+    if PolSAR is not None:
+        out_channels = 2 if name_dataset == "S1SLC" else 3
+        return PolSAR(out_channel=out_channels)
+
+    raise ImportError(
+        "torchcvnn.transforms does not expose PolSARtoTensor or PolSAR."
+    )
+
+
+def build_to_tensor_transform(dtype: str = "complex64"):
+    to_tensor_signature = inspect.signature(ToTensor)
+    if "dtype" in to_tensor_signature.parameters:
+        return ToTensor(dtype=dtype)
+    return ToTensor()
 
 
 def calculate_class_distribution(masks: list, num_classes: int) -> np.ndarray:
