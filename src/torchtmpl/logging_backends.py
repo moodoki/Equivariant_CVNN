@@ -101,9 +101,9 @@ def _flatten_distribution_values(value: Any) -> list[float]:
 
 def resolve_logging_backend(config: dict) -> str:
     logging_config = config.setdefault("logging", {})
-    backend = os.environ.get(
-        "EXPERIMENT_LOGGER_BACKEND", logging_config.get("backend", "aim")
-    )
+    backend = os.environ.get("EXPERIMENT_LOGGER_BACKEND")
+    if backend is None:
+        backend = logging_config.get("backend", "aim")
     backend = str(backend).strip().lower()
     if backend in {"none", "disabled", "off", "false"}:
         backend = "disabled"
@@ -111,6 +111,30 @@ def resolve_logging_backend(config: dict) -> str:
         raise ValueError(f"Unsupported experiment logging backend: {backend}")
     logging_config["backend"] = backend
     return backend
+
+
+def resolve_aim_experiment(config: dict) -> str:
+    logging_config = config.setdefault("logging", {})
+    aim_config = logging_config.setdefault("aim", {})
+    experiment = aim_config.get("experiment")
+    if experiment:
+        experiment = str(experiment)
+        aim_config["experiment"] = experiment
+        return experiment
+
+    legacy_wandb_config = logging_config.get("wandb") or {}
+    if legacy_wandb_config.get("project"):
+        experiment = str(legacy_wandb_config["project"])
+    else:
+        dataset_config = config.get("data", {}).get("dataset", {})
+        dataset_name = dataset_config.get("name")
+        if dataset_name:
+            experiment = str(dataset_name)
+        else:
+            experiment = str(config["model"]["class"])
+
+    aim_config["experiment"] = experiment
+    return experiment
 
 
 def resolve_aim_repo(logging_config: dict) -> str:
@@ -121,7 +145,7 @@ def resolve_aim_repo(logging_config: dict) -> str:
     elif Path("/data/equiv-cvnn").exists():
         repo = "/data/equiv-cvnn/aimlogs"
     else:
-        repo = "./aim"
+        repo = "./aimlogs"
     aim_config["repo"] = repo
     return repo
 
@@ -145,6 +169,10 @@ class ExperimentLogger:
     @property
     def run_id(self) -> str | None:
         return None
+
+    @property
+    def run_label(self) -> str:
+        return "run"
 
     def log_config(self, config: dict) -> None:
         return None
@@ -244,6 +272,10 @@ class WandbExperimentLogger(ExperimentLogger):
         run = getattr(self._wandb, "run", None)
         return getattr(run, "id", None)
 
+    @property
+    def run_label(self) -> str:
+        return "run name"
+
     def log_config(self, config: dict) -> None:
         sanitized = sanitize_wandb_config(config)
         self._wandb.config.update(sanitized, allow_val_change=True)
@@ -316,7 +348,7 @@ class AimExperimentLogger(ExperimentLogger):
         logging_config = config.setdefault("logging", {})
         aim_config = logging_config.setdefault("aim", {})
         repo = resolve_aim_repo(logging_config)
-        experiment = aim_config.get("experiment", config["model"]["class"])
+        experiment = resolve_aim_experiment(config)
         run_kwargs = {"repo": repo, "experiment": experiment}
         if config.get("pretrained") and aim_config.get("run_hash"):
             run_kwargs["run_hash"] = aim_config["run_hash"]
@@ -326,6 +358,7 @@ class AimExperimentLogger(ExperimentLogger):
             run_kwargs.pop("run_hash", None)
             self._run = self._Run(**run_kwargs)
         aim_config["repo"] = repo
+        aim_config["experiment"] = experiment
         aim_config["run_hash"] = self.run_id
         logging.info("Will be recording in Aim run hash: %s", self.run_name)
         self._tracked_config = copy.deepcopy(config) if tracked_config is None else copy.deepcopy(tracked_config)
@@ -333,7 +366,11 @@ class AimExperimentLogger(ExperimentLogger):
         self._run["config"] = copy.deepcopy(self._tracked_config)
         self._run["config_flat"] = flatten_config(self._tracked_config)
         self._run["backend"] = self.backend_name
+        self._run["experiment"] = experiment
         self._run["tags"] = list(self._tags)
+        legacy_wandb_config = logging_config.get("wandb")
+        if legacy_wandb_config:
+            self._run["legacy_wandb"] = copy.deepcopy(legacy_wandb_config)
         add_tag = getattr(self._run, "add_tag", None)
         if callable(add_tag):
             for tag in self._tags:
@@ -349,6 +386,10 @@ class AimExperimentLogger(ExperimentLogger):
     @property
     def run_id(self) -> str | None:
         return getattr(self._run, "hash", None)
+
+    @property
+    def run_label(self) -> str:
+        return "run hash"
 
     def log_config(self, config: dict) -> None:
         flattened = flatten_config(config)

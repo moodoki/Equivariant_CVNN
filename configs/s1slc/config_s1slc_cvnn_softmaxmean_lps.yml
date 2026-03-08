@@ -9,6 +9,9 @@ data:
   test_ratio: 0.15
 logging:
   logdir: ./logs
+  backend: aim
+  aim:
+    experiment: s1slc
   wandb:
     entity: equivariant_cvnn
     project: s1slc

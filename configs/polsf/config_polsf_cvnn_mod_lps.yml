@@ -11,6 +11,9 @@ data:
   test_ratio: 0.15
 logging:
   logdir: ./logs
+  backend: aim
+  aim:
+    experiment: polsf
   wandb:
     entity: equivariant_cvnn
     project: polsf

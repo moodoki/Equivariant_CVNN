@@ -432,7 +432,10 @@ def save_model_summary(
     """
     logger_section = ""
     if experiment_logger.is_enabled():
-        logger_section = f"{experiment_logger.backend_name.title()} run name: {experiment_logger.run_name}\n\n"
+        logger_section = (
+            f"{experiment_logger.backend_name.title()} "
+            f"{experiment_logger.run_label}: {experiment_logger.run_name}\n\n"
+        )
 
     summary_text = (
         f"Logdir: {logdir}\n"

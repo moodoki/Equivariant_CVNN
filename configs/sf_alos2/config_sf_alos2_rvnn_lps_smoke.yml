@@ -16,6 +16,9 @@ data:
     start_row: 3000
 logging:
   logdir: ./logs
+  backend: aim
+  aim:
+    experiment: sf_alos2
 loss:
   name: ComplexMSELoss
 model:
