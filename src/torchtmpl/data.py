@@ -15,6 +15,7 @@ from sklearn.cluster import KMeans
 from torchcvnn.datasets import ALOSDataset, PolSFDataset, Bretigny, S1SLC
 from torchcvnn.transforms import FFTResize, ToTensor, Unsqueeze
 import torchvision
+from .tel2commercial import Tel2Commrcial_v1
 
 try:
     from torchcvnn.transforms import PolSARtoTensor
@@ -93,15 +94,24 @@ class GenericDatasetWrapper(Dataset):
         return len(self.dataset)
 
 
-def get_transform_instance(transform_name, name_dataset, size):
+def get_transform_instance(transform_name, name_dataset, size, data_config=None):
     # Split the transform_name string on commas and strip whitespace
     transform_names = [name.strip() for name in transform_name.split(",")]
 
     # Get the classes from the module based on the transform names
     transform_instances = []
 
-    if name_dataset in ["PolSFDataset", "Bretigny", "S1SLC", "ALOSDataset"]:
-        transform_instances.append(build_polsar_to_tensor_transform(name_dataset))
+    if name_dataset in [
+        "PolSFDataset",
+        "Bretigny",
+        "S1SLC",
+        "ALOSDataset",
+        "Tel2Commrcial_v1",
+    ]:
+        out_channels = None if data_config is None else get_polsar_output_channels(data_config)
+        transform_instances.append(
+            build_polsar_to_tensor_transform(name_dataset, out_channels=out_channels)
+        )
 
     transform_instances.append(build_to_tensor_transform())
 
@@ -127,13 +137,31 @@ def get_transform_instance(transform_name, name_dataset, size):
         return transform_instances[0]
 
 
-def build_polsar_to_tensor_transform(name_dataset: str):
-    if PolSARtoTensor is not None:
-        return PolSARtoTensor()
+def get_polsar_output_channels(data_config: dict) -> int:
+    dataset_config = data_config["dataset"]
+    name_dataset = dataset_config["name"]
+
+    if name_dataset == "S1SLC":
+        return 2
+
+    if name_dataset == "Tel2Commrcial_v1":
+        output_polarizations = dataset_config.get("output_polarizations")
+        if output_polarizations is not None:
+            return len(output_polarizations)
+        return 4 if dataset_config.get("output_mode", "three_channel") == "quad" else 3
+
+    return 3
+
+
+def build_polsar_to_tensor_transform(name_dataset: str, out_channels: int | None = None):
+    if out_channels is None:
+        out_channels = 2 if name_dataset == "S1SLC" else 3
 
     if PolSAR is not None:
-        out_channels = 2 if name_dataset == "S1SLC" else 3
         return PolSAR(out_channel=out_channels)
+
+    if PolSARtoTensor is not None and out_channels == 3:
+        return PolSARtoTensor()
 
     raise ImportError(
         "torchcvnn.transforms does not expose PolSARtoTensor or PolSAR."
@@ -189,7 +217,12 @@ def get_dataloaders(data_config: dict, use_cuda: bool) -> tuple:
 
     logging.info("  - Dataset creation")
 
-    input_transform = get_transform_instance(transform, name_dataset, img_size)
+    input_transform = get_transform_instance(
+        transform_name=transform,
+        name_dataset=name_dataset,
+        size=img_size,
+        data_config=data_config,
+    )
 
     if name_dataset == "ALOSDataset":
         train_dataset, valid_dataset, test_dataset, _, _, _, _ = prepare_alos_dataset(
@@ -220,6 +253,18 @@ def get_dataloaders(data_config: dict, use_cuda: bool) -> tuple:
             valid_ratio,
             test_ratio,
             data_config,
+        )
+    elif name_dataset == "Tel2Commrcial_v1":
+        train_dataset, valid_dataset, test_dataset, _, _, _, _ = (
+            prepare_tel2commercial_dataset(
+                data_config,
+                img_size,
+                img_stride,
+                trainpath,
+                input_transform,
+                valid_ratio,
+                test_ratio,
+            )
         )
 
     if name_dataset in [
@@ -298,7 +343,12 @@ def get_full_image_dataloader(
 
     logging.info("  - Dataset creation")
 
-    input_transform = get_transform_instance(transform, name_dataset, img_size)
+    input_transform = get_transform_instance(
+        transform_name=transform,
+        name_dataset=name_dataset,
+        size=img_size,
+        data_config=data_config,
+    )
 
     if name_dataset == "ALOSDataset":
         (
@@ -348,6 +398,27 @@ def get_full_image_dataloader(
         )
         nsamples_per_cols = base_dataset.alos_dataset.nsamples_per_cols
         nsamples_per_rows = base_dataset.alos_dataset.nsamples_per_rows
+    elif name_dataset == "Tel2Commrcial_v1":
+        (
+            train_dataset,
+            valid_dataset,
+            test_dataset,
+            base_dataset,
+            train_indices,
+            valid_indices,
+            test_indices,
+        ) = prepare_tel2commercial_dataset(
+            data_config,
+            img_size,
+            img_size,
+            trainpath,
+            input_transform,
+            valid_ratio,
+            test_ratio,
+            crop=True,
+        )
+        nsamples_per_cols = base_dataset.nsamples_per_cols
+        nsamples_per_rows = base_dataset.nsamples_per_rows
     wrapped_dataset = GenericDatasetWrapper(base_dataset)
 
     data_loader = DataLoader(
@@ -358,7 +429,7 @@ def get_full_image_dataloader(
         pin_memory=use_cuda,
     )
 
-    if name_dataset in ["PolSFDataset", "ALOSDataset"]:
+    if name_dataset in ["PolSFDataset", "ALOSDataset", "Tel2Commrcial_v1"]:
         indices = [train_indices, valid_indices, test_indices]
     else:
         indices = None
@@ -402,6 +473,16 @@ def extract_data_config(data_config: dict) -> tuple:
     )
 
 
+def extract_crop_coordinates(data_config, crop: bool):
+    if not crop or "crop" not in data_config:
+        return None
+
+    return (
+        (data_config["crop"]["start_row"], data_config["crop"]["start_col"]),
+        (data_config["crop"]["end_row"], data_config["crop"]["end_col"]),
+    )
+
+
 def prepare_alos_dataset(
     data_config,
     img_size,
@@ -412,18 +493,66 @@ def prepare_alos_dataset(
     test_ratio,
     crop=False,
 ):
-    if crop:
-        crop_coordinates = (
-            (data_config["crop"]["start_row"], data_config["crop"]["start_col"]),
-            (data_config["crop"]["end_row"], data_config["crop"]["end_col"]),
-        )
-    else:
-        crop_coordinates = None
+    crop_coordinates = extract_crop_coordinates(data_config, crop)
 
     trainpath = pathlib.Path(trainpath) / "VOL-ALOS2044980750-150324-HBQR1.1__A"
     base_dataset = eval(
         f"{data_config['dataset']['name']}(volpath=trainpath, transform=input_transform, crop_coordinates=crop_coordinates, patch_size=img_size, patch_stride=img_stride)"
     )
+    indices = list(range(len(base_dataset)))
+    random.shuffle(indices)
+
+    num_valid = int(valid_ratio * len(indices))
+    num_test = int(test_ratio * len(indices))
+    num_train = len(indices) - num_valid - num_test
+
+    train_indices = indices[:num_train]
+    valid_indices = indices[num_train : num_train + num_valid]
+    test_indices = indices[num_train + num_valid :]
+
+    train_dataset = Subset(base_dataset, train_indices)
+    valid_dataset = Subset(base_dataset, valid_indices)
+    test_dataset = Subset(base_dataset, test_indices)
+
+    logging.info(f"  - Training set: {len(train_dataset)} samples")
+    logging.info(f"  - Validation set: {len(valid_dataset)} samples")
+    logging.info(f"  - Test set: {len(test_dataset)} samples")
+
+    return (
+        train_dataset,
+        valid_dataset,
+        test_dataset,
+        base_dataset,
+        train_indices,
+        valid_indices,
+        test_indices,
+    )
+
+
+def prepare_tel2commercial_dataset(
+    data_config,
+    img_size,
+    img_stride,
+    trainpath,
+    input_transform,
+    valid_ratio,
+    test_ratio,
+    crop=False,
+):
+    dataset_config = data_config["dataset"]
+    crop_coordinates = extract_crop_coordinates(data_config, crop)
+    base_dataset = Tel2Commrcial_v1(
+        root=trainpath,
+        transform=input_transform,
+        crop_coordinates=crop_coordinates,
+        patch_size=img_size,
+        patch_stride=img_stride,
+        output_mode=dataset_config.get("output_mode", "three_channel"),
+        output_polarizations=dataset_config.get("output_polarizations"),
+        scene_names=dataset_config.get("scene_names"),
+        product_names=dataset_config.get("product_names"),
+    )
+
     indices = list(range(len(base_dataset)))
     random.shuffle(indices)
 

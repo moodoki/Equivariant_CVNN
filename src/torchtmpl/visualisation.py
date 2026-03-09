@@ -931,6 +931,15 @@ def plot_reconstruction_polsar_images(
     wandb_log: bool,
     dtype: torch.dtype,
 ) -> None:
+    def select_display_channels(array: np.ndarray) -> tuple[np.ndarray, list[str]]:
+        if array.shape[-1] == 4:
+            return array[:, :, (0, 1, 3)], ["HH", "HV", "VV"]
+        if array.shape[-1] == 3:
+            return array, ["HH", "HV", "VV"]
+        raise ValueError(
+            f"Reconstruction visualization expects 3 or 4 channels, got {array.shape[-1]}."
+        )
+
     num_samples = to_be_vizualized[0].shape[0]  # Number of samples
     ncols = 12  # Number of plots per sample
     fig, axes = plt.subplots(
@@ -965,22 +974,31 @@ def plot_reconstruction_polsar_images(
         pred = to_be_vizualized[1][i]
         # Transform the input numpy array into a complex array
         if dtype == torch.float64:
-            img = img[:3] + 1j * img[3:]
-            pred = pred[:3] + 1j * pred[3:]
+            num_complex_channels = img.shape[0] // 2
+            img = img[:num_complex_channels] + 1j * img[num_complex_channels:]
+            pred = pred[:num_complex_channels] + 1j * pred[num_complex_channels:]
 
         idx = 0
 
         # Amplitude images (Pauli and Krogager basis)
         img_ground_truth = exp_amplitude_transform(img).numpy().transpose(1, 2, 0)
         img_predicted = exp_amplitude_transform(pred).numpy().transpose(1, 2, 0)
+        img_ground_truth_display, channel_labels = select_display_channels(
+            img_ground_truth
+        )
+        img_predicted_display, _ = select_display_channels(img_predicted)
 
-        pauli_img_ground_truth = pauli_transform(img_ground_truth).transpose(1, 2, 0)
-        pauli_img_predicted = pauli_transform(img_predicted).transpose(1, 2, 0)
-
-        krogager_img_ground_truth = krogager_transform(img_ground_truth).transpose(
+        pauli_img_ground_truth = pauli_transform(img_ground_truth_display).transpose(
             1, 2, 0
         )
-        krogager_img_predicted = krogager_transform(img_predicted).transpose(1, 2, 0)
+        pauli_img_predicted = pauli_transform(img_predicted_display).transpose(1, 2, 0)
+
+        krogager_img_ground_truth = krogager_transform(
+            img_ground_truth_display
+        ).transpose(1, 2, 0)
+        krogager_img_predicted = krogager_transform(img_predicted_display).transpose(
+            1, 2, 0
+        )
 
         # Equalized amplitude images
         eq_img_ground_truth, (p2, p98) = equalize(pauli_img_ground_truth)
@@ -1008,18 +1026,19 @@ def plot_reconstruction_polsar_images(
         idx += 1
 
         # Angular distance per channel
-        channels = ["HH", "HV", "VV"]
-        for ch in range(len(channels)):
+        for ch, channel_label in enumerate(channel_labels):
             angular_distance_img = plot_angular_distance(
-                img_ground_truth[:, :, ch], img_predicted[:, :, ch]
+                img_ground_truth_display[:, :, ch], img_predicted_display[:, :, ch]
             )
             axes[i][idx].imshow(angular_distance_img, cmap="hsv", origin="lower")
-            axes[i][idx].set_title(f"Angular Dist {channels[ch]} {i + 1}")
+            axes[i][idx].set_title(f"Angular Dist {channel_label} {i + 1}")
             axes[i][idx].axis("off")
             idx += 1
 
         # Histograms of differences
-        mse_values = (np.abs(img_ground_truth) - np.abs(img_predicted)).flatten()
+        mse_values = (
+            np.abs(img_ground_truth_display) - np.abs(img_predicted_display)
+        ).flatten()
         q5, q95 = np.percentile(mse_values, [5, 95])
         filtered_data = mse_values[(mse_values > q5) & (mse_values < q95)]
 
@@ -1030,7 +1049,7 @@ def plot_reconstruction_polsar_images(
         idx += 1
 
         angular_distance_hist = angular_distance(
-            img_ground_truth, img_predicted
+            img_ground_truth_display, img_predicted_display
         ).flatten()
         axes[i][idx].hist(angular_distance_hist, bins=100, alpha=0.75)
         axes[i][idx].set_title(f"Angular Dist Hist {i + 1}")

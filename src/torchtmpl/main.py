@@ -27,11 +27,24 @@ from . import optim
 from . import utils
 from . import visualisation as vis
 from .logging_backends import build_experiment_logger
+from .tel2commercial import Tel2Commrcial_v1
 import torchtmpl as tl
 from torchtmpl.models.projection import PolyCtoR, MLPCtoR, NoCtoR, ModCtoR
 from torchtmpl.models.softmax import Softmax, SoftmaxMeanCtoR, SoftmaxProductCtoR
 from torchtmpl.losses import FocalLoss
 from torchcvnn.datasets import ALOSDataset, PolSFDataset, Bretigny
+
+
+FULL_IMAGE_RECONSTRUCTION_DATASETS = (
+    PolSFDataset,
+    ALOSDataset,
+    Bretigny,
+    Tel2Commrcial_v1,
+)
+INPUT_ONLY_RECONSTRUCTION_DATASETS = (
+    ALOSDataset,
+    Tel2Commrcial_v1,
+)
 
 
 def init_weights(m: nn.Module) -> None:
@@ -772,7 +785,7 @@ def test(params: list) -> None:
     log_images_and_metrics(experiment_logger, metrics)
 
     if (
-        isinstance(test_loader.dataset.dataset, (PolSFDataset, ALOSDataset, Bretigny))
+        isinstance(test_loader.dataset.dataset, FULL_IMAGE_RECONSTRUCTION_DATASETS)
         or (
             isinstance(projection, PolyCtoR)
             and (config["model"]["projection"]["global"])
@@ -780,9 +793,7 @@ def test(params: list) -> None:
         or task in ["classification", "segmentation"]
     ):
 
-        if isinstance(
-            test_loader.dataset.dataset, (PolSFDataset, ALOSDataset, Bretigny)
-        ):
+        if isinstance(test_loader.dataset.dataset, FULL_IMAGE_RECONSTRUCTION_DATASETS):
 
             (
                 data_loader,
@@ -857,7 +868,7 @@ def test(params: list) -> None:
                 ignore_index=ignore_index,
             )
 
-    if isinstance(test_loader.dataset.dataset, (PolSFDataset, ALOSDataset, Bretigny)):
+    if isinstance(test_loader.dataset.dataset, FULL_IMAGE_RECONSTRUCTION_DATASETS):
         image_tensors = []
         ground_truth_tensors = []
         indice_tensors = []
@@ -867,14 +878,14 @@ def test(params: list) -> None:
             image_tensors.extend(img_tensor)
             grd_truth = (
                 None
-                if isinstance(test_loader.dataset.dataset, ALOSDataset)
+                if isinstance(test_loader.dataset.dataset, INPUT_ONLY_RECONSTRUCTION_DATASETS)
                 else data[1].cpu().detach().numpy()
             )
             if grd_truth is not None:
                 ground_truth_tensors.extend(grd_truth)
             ind_tensor = (
                 data[1].cpu().detach().numpy()
-                if isinstance(test_loader.dataset.dataset, ALOSDataset)
+                if isinstance(test_loader.dataset.dataset, INPUT_ONLY_RECONSTRUCTION_DATASETS)
                 else data[2].cpu().detach().numpy()
             )
             indice_tensors.extend(ind_tensor)
