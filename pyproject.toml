@@ -3,6 +3,7 @@ name = "torchtmpl"
 version = "0.0.1"
 
 dependencies = [
+    "aim==3.29.1",
     "PyYAML>=6.0",
     "torchinfo>=1.7.2",
     "wandb>=0.13.11",
