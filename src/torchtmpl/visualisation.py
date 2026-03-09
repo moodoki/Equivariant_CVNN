@@ -931,6 +931,15 @@ def plot_reconstruction_polsar_images(
     wandb_log: bool,
     dtype: torch.dtype,
 ) -> None:
+    def downsample_display_pair(
+        ground_truth: np.ndarray, predicted: np.ndarray, max_side: int = 1024
+    ) -> tuple[np.ndarray, np.ndarray]:
+        height, width = ground_truth.shape[:2]
+        step = max(1, int(np.ceil(max(height, width) / max_side)))
+        if step == 1:
+            return ground_truth, predicted
+        return ground_truth[::step, ::step, ...], predicted[::step, ::step, ...]
+
     def select_display_channels(array: np.ndarray) -> tuple[np.ndarray, list[str]]:
         if array.shape[-1] == 4:
             return array[:, :, (0, 1, 3)], ["HH", "HV", "VV"]
@@ -987,6 +996,9 @@ def plot_reconstruction_polsar_images(
             img_ground_truth
         )
         img_predicted_display, _ = select_display_channels(img_predicted)
+        img_ground_truth_display, img_predicted_display = downsample_display_pair(
+            img_ground_truth_display, img_predicted_display
+        )
 
         pauli_img_ground_truth = pauli_transform(img_ground_truth_display).transpose(
             1, 2, 0
