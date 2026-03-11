@@ -266,6 +266,8 @@ def get_dataloaders(data_config: dict, use_cuda: bool) -> tuple:
                 test_ratio,
             )
         )
+    else:
+        raise ValueError(f"Unsupported dataset for dataloaders: {name_dataset!r}")
 
     if name_dataset in [
         "PolSFDataset",
@@ -419,6 +421,10 @@ def get_full_image_dataloader(
         )
         nsamples_per_cols = base_dataset.nsamples_per_cols
         nsamples_per_rows = base_dataset.nsamples_per_rows
+    else:
+        raise ValueError(
+            f"Unsupported dataset for full image dataloader: {name_dataset!r}"
+        )
     wrapped_dataset = GenericDatasetWrapper(base_dataset)
 
     data_loader = DataLoader(
@@ -455,7 +461,7 @@ def extract_data_config(data_config: dict) -> tuple:
     test_ratio = data_config["test_ratio"]
     batch_size = data_config["batch_size"]
     num_workers = data_config["num_workers"]
-    name_dataset = data_config["dataset"]["name"]
+    name_dataset = data_config["dataset"]["name"].strip()
     transform = data_config["transform"]
     trainpath = path.expandvars(
         data_config["dataset"]["trainpath"]
