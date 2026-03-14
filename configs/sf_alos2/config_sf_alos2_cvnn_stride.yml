@@ -3,7 +3,7 @@ data:
   dataset:
     name: ALOSDataset
     trainpath: ../../datasets/SAN_FRANCISCO_ALOS2
-  transform: LogAmplitude, RealImaginary
+  transform: LogAmplitude
   img_size: 64
   img_stride: 64
   num_workers: 4
@@ -16,36 +16,33 @@ data:
     start_row: 3000
 logging:
   logdir: ./logs
-  backend: aim
-  aim:
-    experiment: sf_alos2
   wandb:
     entity: equivariant_cvnn
     project: sf_alos2
 loss:
   name: ComplexMSELoss
 model:
-  activation: ReLU
-  channels_ratio: 96
+  activation: modReLU
+  channels_ratio: 16
   class: AutoEncoderWD
-  res: true
+  res: false
   projection:
     class: ModCtoR
     global: true
-  downsampling: APD
-  upsampling: APU
+  downsampling: StridedConv
+  upsampling: ConvTranspose
   latent_dim: Null
   dropout: 0
   normalization:
     method: BatchNorm
     track_running_stats: false
-  num_layers: 2
+  num_layers: 4
 nepochs: 500
 optim:
   algo: AdamW
   params:
-    lr: 0.005
-    weight_decay: 0.0005
+    lr: 0.0005
+    weight_decay: 0.0001
 scheduler:
   algo: StepLR
   params:
@@ -53,4 +50,4 @@ scheduler:
     gamma: 0.9
 pretrained: false
 world_size: 4
-dtype: float64
+dtype: complex64

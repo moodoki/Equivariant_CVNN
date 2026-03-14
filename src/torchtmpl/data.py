@@ -200,6 +200,7 @@ def get_dataloaders(data_config: dict, use_cuda: bool) -> tuple:
             input_transform,
             valid_ratio,
             test_ratio,
+            crop=True, # Need to change back to False for the full image
         )
     elif name_dataset == "Bretigny":
         train_dataset, valid_dataset, test_dataset = prepare_bretigny_dataset(
@@ -566,7 +567,10 @@ def compute_class_weights(train_dataset, num_classes, ignore_index):
         )
     elif isinstance(label_sample, torch.Tensor):
         all_labels = torch.cat(
-            [train_dataset[idx][1].flatten().to(torch.long) for idx in range(len(train_dataset))]
+            [
+                train_dataset[idx][1].flatten().to(torch.long)
+                for idx in range(len(train_dataset))
+            ]
         )
     elif isinstance(label_sample, np.ndarray):
         all_labels = torch.cat(
@@ -576,7 +580,9 @@ def compute_class_weights(train_dataset, num_classes, ignore_index):
             ]
         )
     else:
-        raise TypeError(f"Unsupported label type for class weights: {type(label_sample)!r}")
+        raise TypeError(
+            f"Unsupported label type for class weights: {type(label_sample)!r}"
+        )
 
     class_counts = torch.bincount(all_labels, minlength=num_classes)
 

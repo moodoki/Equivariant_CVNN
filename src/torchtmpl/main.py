@@ -942,11 +942,12 @@ def test(params: list) -> None:
                 sets_masks=sets_masks,
             )
         elif task == "reconstruction":
-            vis.plot_reconstruction_polsar_images(
+            res = vis.plot_reconstruction_polsar_images(
                 to_be_vizualized=to_be_vizualized,
                 logdir=logdir,
                 wandb_log=experiment_logger,
                 dtype=dtype,
+                metrics=metrics,
             )
 
     elif task == "classification":
