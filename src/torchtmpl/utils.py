@@ -1150,11 +1150,17 @@ def generate_unique_logpath(logdir: str, raw_run_name: str) -> str:
 
 
 def log_images_and_metrics(
-    wandb_log: bool,
+    experiment_logger,
     metrics: dict,
 ) -> None:
 
-    if wandb_log:
+    if experiment_logger and hasattr(experiment_logger, "is_enabled"):
+        if experiment_logger.is_enabled():
+            logging.info(
+                "Logging metrics to %s", experiment_logger.backend_name.title()
+            )
+            experiment_logger.log_metrics(metrics, step=metrics.get("epoch"))
+    elif experiment_logger:
         logging.info("Logging to WandB")
 
         # Prepare a dictionary for logging
