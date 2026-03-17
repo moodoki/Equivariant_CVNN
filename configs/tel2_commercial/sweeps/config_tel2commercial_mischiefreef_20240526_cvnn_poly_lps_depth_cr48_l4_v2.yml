@@ -1,5 +1,5 @@
 data:
-  batch_size: 4
+  batch_size: 48
   dataset:
     name: Tel2Commrcial_v1
     trainpath: $TMPDIR/data
@@ -11,14 +11,14 @@ data:
   transform: LogAmplitude
   img_size: 64
   img_stride: 64
-  num_workers: 0
+  num_workers: 4
   valid_ratio: 0.15
   test_ratio: 0.15
 logging:
   logdir: /data/equiv-cvnn/logs
   backend: aim
   aim:
-    experiment: tel2commercial_mischiefreef_20240526
+    experiment: tel2commercial_mischiefreef_20240526_depth_sweep_v2
 loss:
   name: ComplexMSELoss
 model:
@@ -36,13 +36,13 @@ model:
   normalization:
     method: BatchNorm
     track_running_stats: false
-  num_layers: 2
+  num_layers: 4
   gumbel_tau:
     start_value: 10
     gamma: 0.1
     start_decay_epoch: 10
     min_value: 0.00001
-nepochs: 1
+nepochs: 500
 optim:
   algo: AdamW
   params:
