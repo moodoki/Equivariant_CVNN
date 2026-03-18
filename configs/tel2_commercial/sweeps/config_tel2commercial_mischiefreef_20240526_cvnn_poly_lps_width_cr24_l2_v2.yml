@@ -8,6 +8,8 @@ data:
       - MischiefReef_20240526
     product_names:
       - TEL2_SPOT_GRD_QP_20240526T034301_20240526T034303_05998_3_0000
+    raw_scale_factor: percentile
+    raw_scale_percentile: 99.5
   transform: LogAmplitude
   img_size: 64
   img_stride: 64

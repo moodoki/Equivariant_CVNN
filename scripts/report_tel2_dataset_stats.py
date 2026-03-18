@@ -140,6 +140,8 @@ def build_dataset(config: dict) -> Tel2Commrcial_v1:
             output_polarizations=dataset_config.get("output_polarizations"),
             scene_names=dataset_config.get("scene_names"),
             product_names=dataset_config.get("product_names"),
+            raw_scale_factor=dataset_config.get("raw_scale_factor", "percentile"),
+            raw_scale_percentile=dataset_config.get("raw_scale_percentile", 99.5),
         )
 
     volpath = Path(trainpath) / "VOL-ALOS2044980750-150324-HBQR1.1__A"
@@ -536,6 +538,8 @@ def write_report(
         f"- Output channels: `{', '.join(channel_names)}`",
         f"- Patch size: `{dataset.patch_size}`",
         f"- Patch stride: `{dataset.patch_stride}`",
+        f"- Raw scale source: `{getattr(dataset, 'raw_scale_source', 'n/a')}`",
+        f"- Raw scale factor: `{getattr(dataset, 'raw_scale_factor', 'n/a')}`",
         f"- LogAmplitude clamp: `[{spec.min_value}, {spec.max_value}]`",
         "",
         "The raw statistics are computed from amplitude values of the exact channels "

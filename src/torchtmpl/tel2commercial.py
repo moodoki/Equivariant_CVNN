@@ -39,6 +39,28 @@ def _normalize_optional_names(values: Sequence[str] | None) -> set[str] | None:
     return {value for value in values if value}
 
 
+def _resolve_raw_scale_config(
+    raw_scale_factor: float | str | None,
+    raw_scale_percentile: float,
+) -> tuple[float | None, float | None, str]:
+    if raw_scale_factor is None:
+        return None, None, "disabled"
+
+    if isinstance(raw_scale_factor, str):
+        token = raw_scale_factor.strip().lower()
+        if token in {"auto", "default", "percentile", "p99.5"}:
+            return None, float(raw_scale_percentile), f"percentile_{raw_scale_percentile:g}"
+        raise ValueError(
+            "Unsupported raw_scale_factor string "
+            f"{raw_scale_factor!r}; expected 'auto', 'default', 'percentile', or a float."
+        )
+
+    resolved = float(raw_scale_factor)
+    if resolved <= 0:
+        raise ValueError("raw_scale_factor must be strictly positive when provided.")
+    return resolved, None, "explicit"
+
+
 def _resolve_output_polarizations(
     output_mode: str,
     output_polarizations: Sequence[str] | None,
@@ -177,6 +199,8 @@ class Tel2Commrcial_v1(Dataset):
         output_polarizations: Sequence[str] | None = None,
         scene_names: Sequence[str] | None = None,
         product_names: Sequence[str] | None = None,
+        raw_scale_factor: float | str | None = "percentile",
+        raw_scale_percentile: float = 99.5,
     ) -> None:
         super().__init__()
         if patch_size is None or patch_stride is None:
@@ -206,6 +230,17 @@ class Tel2Commrcial_v1(Dataset):
         )
         self._offsets = np.cumsum([0] + [product.patch_count for product in self.products])
         self._memmaps: dict[tuple[str, str], np.memmap] = {}
+        resolved_scale, resolved_percentile, scale_source = _resolve_raw_scale_config(
+            raw_scale_factor=raw_scale_factor,
+            raw_scale_percentile=raw_scale_percentile,
+        )
+        self.raw_scale_percentile = resolved_percentile
+        self.raw_scale_source = scale_source
+        self.raw_scale_factor = resolved_scale
+        if self.raw_scale_percentile is not None:
+            self.raw_scale_factor = self._compute_raw_scale_factor(
+                percentile=self.raw_scale_percentile
+            )
 
     def __len__(self) -> int:
         return int(self._offsets[-1])
@@ -247,6 +282,27 @@ class Tel2Commrcial_v1(Dataset):
             self._memmaps[cache_key] = memmap
         return memmap
 
+    def _compute_raw_scale_factor(self, percentile: float) -> float:
+        amplitudes: list[np.ndarray] = []
+        for product in self.products:
+            patch = self._read_patch(
+                product,
+                product.row_start,
+                product.row_end,
+                product.col_start,
+                product.col_end,
+                apply_raw_scale=False,
+            )
+            stacked = self._stack_output_channels(patch)
+            amplitudes.append(np.abs(stacked).reshape(-1))
+
+        raw_scale_factor = float(np.percentile(np.concatenate(amplitudes), percentile))
+        if raw_scale_factor <= 0:
+            raise ValueError(
+                f"Computed TEL2 raw scale factor {raw_scale_factor!r} is not strictly positive."
+            )
+        return raw_scale_factor
+
     def _read_patch(
         self,
         product: Tel2CommercialProduct,
@@ -254,12 +310,15 @@ class Tel2Commrcial_v1(Dataset):
         row_end: int,
         col_start: int,
         col_end: int,
+        apply_raw_scale: bool = True,
     ) -> dict[str, np.ndarray]:
         channels: dict[str, np.ndarray] = {}
         for pol in FULL_POLARIZATIONS:
             interleaved = self._get_interleaved_memmap(product, pol)
             raw_patch = interleaved[row_start:row_end, col_start * 2 : col_end * 2]
             complex_patch = raw_patch[:, ::2] + 1j * raw_patch[:, 1::2]
+            if apply_raw_scale and self.raw_scale_factor is not None:
+                complex_patch = complex_patch / self.raw_scale_factor
             channels[pol] = np.asarray(complex_patch, dtype=np.complex64)
         return channels
 

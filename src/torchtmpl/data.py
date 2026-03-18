@@ -557,6 +557,8 @@ def prepare_tel2commercial_dataset(
         output_polarizations=dataset_config.get("output_polarizations"),
         scene_names=dataset_config.get("scene_names"),
         product_names=dataset_config.get("product_names"),
+        raw_scale_factor=dataset_config.get("raw_scale_factor", "percentile"),
+        raw_scale_percentile=dataset_config.get("raw_scale_percentile", 99.5),
     )
 
     indices = list(range(len(base_dataset)))
