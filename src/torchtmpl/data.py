@@ -264,6 +264,7 @@ def get_dataloaders(data_config: dict, use_cuda: bool) -> tuple:
                 input_transform,
                 valid_ratio,
                 test_ratio,
+                crop="crop" in data_config,
             )
         )
     else:
