@@ -883,6 +883,7 @@ def plot_synchrony_images(
     )
 
     axes = np.atleast_2d(axes)  # Ensure axes are always 2D for consistent indexing
+    confusion_summaries = []
 
     for i in range(num_samples):
         # Extract ground truth, prediction, and image
@@ -959,6 +960,7 @@ def plot_reconstruction_polsar_images(
     )
 
     axes = np.atleast_2d(axes)  # Ensure axes are always 2D for consistent indexing
+    confusion_summaries = []
 
     # Class colors for H-alpha visualization
     class_colors = {
@@ -1088,6 +1090,7 @@ def plot_reconstruction_polsar_images(
         confusion_matrix = skm.confusion_matrix(
             h_alpha_gt.ravel(), h_alpha_pred.ravel(), normalize="true"
         )
+        confusion_summaries.append((i + 1, confusion_matrix.copy()))
         # Confusion matrix
         sns.heatmap(
             confusion_matrix.round(decimals=3),
@@ -1106,6 +1109,19 @@ def plot_reconstruction_polsar_images(
     path = f"{logdir}/reconstruction_images.png"
     plt.savefig(path, bbox_inches="tight", pad_inches=0.1)
     plt.close()
+
+    for sample_idx, confusion_matrix in confusion_summaries:
+        identity = np.eye(confusion_matrix.shape[0], dtype=confusion_matrix.dtype)
+        linf_norm = np.linalg.norm(confusion_matrix - identity, ord=np.inf)
+        print(
+            "Reconstruction H-alpha confusion matrix "
+            f"(sample {sample_idx}):\n"
+            f"{np.array2string(confusion_matrix, precision=3)}"
+        )
+        print(
+            "Reconstruction H-alpha ||C - I||_inf "
+            f"(sample {sample_idx}): {linf_norm:.6f}"
+        )
 
     if wandb_log:
         _log_image(
