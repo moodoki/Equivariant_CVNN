@@ -3,6 +3,7 @@ Base experiment class for CVNN tasks.
 """
 
 # Standard library imports
+import copy
 import random
 import subprocess
 import sys
@@ -14,7 +15,6 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 import numpy as np
 import torch
 import torchinfo
-import wandb
 import yaml
 
 # Local imports
@@ -27,7 +27,7 @@ from cvnn.models.utils import init_weights_mode_aware
 from cvnn.schedulers import build_schedulers
 from cvnn.train import setup_loss_optimizer, train_model
 from cvnn.utils import set_seed, setup_logging
-from cvnn.wandb_utils import setup_wandb
+from torchtmpl.logging_backends import build_experiment_logger
 
 # initialize module-level logger
 logger = setup_logging(__name__)
@@ -58,8 +58,11 @@ class BaseExperiment(ABC):
         # apply mode override if provided
         if mode_override is not None:
             self.cfg["mode"] = mode_override
-        # setup wandb logging and run name
-        self.wandb_log, self.run_name = setup_wandb(self.cfg, resume_logdir)
+        tracked_config = copy.deepcopy(self.cfg)
+        self.experiment_logger = build_experiment_logger(
+            self.cfg, tracked_config=tracked_config
+        )
+        self.run_name = self.experiment_logger.run_name or ""
         # seed
         seed = self.cfg.get("seed") or random.randint(0, 9999)
         self.cfg["seed"] = seed
@@ -149,7 +152,12 @@ class BaseExperiment(ABC):
             + "## Command\n"
             + f"{' '.join(sys.argv)}\n\n"
             + f"Config: {self.cfg}\n\n"
-            + (f"Wandb run name: {self.run_name}\n\n" if self.run_name else "")
+            + (
+                f"{self.experiment_logger.backend_name.title()} "
+                f"{self.experiment_logger.run_label}: {self.run_name}\n\n"
+                if self.experiment_logger.is_enabled() and self.run_name
+                else ""
+            )
             + "## Summary of the model architecture\n"
             + f"{torchinfo.summary(self.model)}\n\n"
             + f"{self.model}\n\n"
@@ -168,8 +176,8 @@ class BaseExperiment(ABC):
             file.write(summary_text)
 
         logger.info(summary_text)
-        if self.cfg.get("wandb"):
-            wandb.log({"summary": summary_text})
+        self.experiment_logger.log_config(self.cfg)
+        self.experiment_logger.log_summary(summary_text)
 
         # Use mode-aware weight initialization
         layer_mode = self.cfg["model"].get("layer_mode")
@@ -346,6 +354,7 @@ class BaseExperiment(ABC):
             scheduler=self.scheduler,
             start_epoch=start_epoch,
             gumbel_experiment=gumbel_experiment,
+            experiment_logger=self.experiment_logger,
         )
         return self.history
 
@@ -428,33 +437,36 @@ class BaseExperiment(ABC):
     def run(self) -> None:
         """Orchestrate training, evaluation, and visualization based on mode."""
         mode = self.cfg.get("mode")
-        # full/train or retrain modes
-        if mode in ("full", "train", None):
-            logger.info("Starting full training")
-            self.train()
-        elif mode == "retrain":
-            logger.info("Retraining from last checkpoint")
-            checkpoint_epoch = self.load_last_model()
-            start_epoch = checkpoint_epoch + 1
-            logger.info(f"Resuming training from epoch {start_epoch}")
-            self.train(start_epoch=start_epoch)
-        # evaluation-only path
-        if mode in ("full", "train", "retrain"):
-            logger.info("Loading best checkpoint for evaluation")
-            self.load_best_model()
-            logger.info("Evaluating results")
-            self.metrics = self.evaluate()
-            logger.info("Creating visualizations")
-            self.visualize()
-        elif mode == "eval":
-            logger.info("Evaluation-only mode: loading best checkpoint")
-            self.model.eval()
-            self.load_best_model()
-            logger.info("Evaluating results")
-            self.metrics = self.evaluate()
-            logger.info("Creating visualizations")
-            self.visualize()
-        else:
-            raise ValueError(
-                f"Unknown mode '{mode}'. Choose from 'full', 'train', 'retrain', 'eval'."
-            )
+        try:
+            # full/train or retrain modes
+            if mode in ("full", "train", None):
+                logger.info("Starting full training")
+                self.train()
+            elif mode == "retrain":
+                logger.info("Retraining from last checkpoint")
+                checkpoint_epoch = self.load_last_model()
+                start_epoch = checkpoint_epoch + 1
+                logger.info(f"Resuming training from epoch {start_epoch}")
+                self.train(start_epoch=start_epoch)
+            # evaluation-only path
+            if mode in ("full", "train", "retrain"):
+                logger.info("Loading best checkpoint for evaluation")
+                self.load_best_model()
+                logger.info("Evaluating results")
+                self.metrics = self.evaluate()
+                logger.info("Creating visualizations")
+                self.visualize()
+            elif mode == "eval":
+                logger.info("Evaluation-only mode: loading best checkpoint")
+                self.model.eval()
+                self.load_best_model()
+                logger.info("Evaluating results")
+                self.metrics = self.evaluate()
+                logger.info("Creating visualizations")
+                self.visualize()
+            else:
+                raise ValueError(
+                    f"Unknown mode '{mode}'. Choose from 'full', 'train', 'retrain', 'eval'."
+                )
+        finally:
+            self.experiment_logger.finish()

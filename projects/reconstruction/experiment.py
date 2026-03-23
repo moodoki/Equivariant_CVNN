@@ -9,7 +9,6 @@ from typing import Any, Dict
 # Third-party imports
 import torch
 import torch.nn as nn
-import wandb
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -52,6 +51,14 @@ from cvnn.metrics_registry import (
 logger = setup_logging(__name__)
 
 
+def _numeric_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        key: value
+        for key, value in metrics.items()
+        if not isinstance(value, (str, dict))
+    }
+
+
 @register_plugin("reconstruction")
 class ReconstructionExperiment(BaseExperiment):
     """Reconstruction experiment implementation.
@@ -86,12 +93,24 @@ class ReconstructionExperiment(BaseExperiment):
             cfg=self.cfg,
             device=self.device
         )
-        if self.wandb_log and hasattr(wandb, "run") and wandb.run:
+        if self.experiment_logger.is_enabled():
             if "stats" in self.metrics:
-                wandb.log({f"stats/{k}": v for k, v in self.metrics["stats"].items()})
+                self.experiment_logger.log_metrics(
+                    {
+                        f"stats/{k}": v
+                        for k, v in _numeric_metrics(self.metrics["stats"]).items()
+                    }
+                )
             if "consistency" in self.metrics:
-                wandb.log({f"consistency/{k}": v for k, v in self.metrics["consistency"].items()})
-            wandb.log({f"reconstruction/{k}": v for k, v in self.metrics["metrics"].items()})
+                self.experiment_logger.log_metrics(
+                    {
+                        f"consistency/{k}": v
+                        for k, v in self.metrics["consistency"].items()
+                    }
+                )
+            self.experiment_logger.log_metrics(
+                {f"reconstruction/{k}": v for k, v in self.metrics["metrics"].items()}
+            )
         logger.info(f"Reconstruction metrics: {self.metrics}")
 
         if self.cfg["data"].get(
@@ -114,11 +133,15 @@ class ReconstructionExperiment(BaseExperiment):
                 reconstructed=reconstruct_image,
                 cfg=self.cfg,
             )
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
+            if self.experiment_logger.is_enabled():
                 for error_name, error_values in reconstruction_errors.items():
                     if error_values.size > 0:
-                        wandb.log({f"metrics/reconstruction_errors/{error_name}_mean": np.mean(error_values)})
-                        wandb.log({f"metrics/reconstruction_errors/{error_name}_std": np.std(error_values)})
+                        self.experiment_logger.log_metrics(
+                            {
+                                f"metrics/reconstruction_errors/{error_name}_mean": np.mean(error_values),
+                                f"metrics/reconstruction_errors/{error_name}_std": np.std(error_values),
+                            }
+                        )
             self.metrics["error_reconstruction"] = reconstruction_errors
             
             if self.cfg["data"].get("type").lower() == "polsar":
@@ -126,24 +149,54 @@ class ReconstructionExperiment(BaseExperiment):
                     image1=original_image,
                     image2=reconstruct_image,
                 )
-                if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                    wandb.log({f"metrics/h_alpha/{k}": v for k, v in h_alpha_metrics.items() 
-                               if k not in ["per_class_metrics", "confusion_matrix_raw", "confusion_matrix_normalized", "class_labels"]})
+                if self.experiment_logger.is_enabled():
+                    self.experiment_logger.log_metrics(
+                        {
+                            f"metrics/h_alpha/{k}": v
+                            for k, v in _numeric_metrics(h_alpha_metrics).items()
+                            if k
+                            not in [
+                                "per_class_metrics",
+                                "confusion_matrix_raw",
+                                "confusion_matrix_normalized",
+                                "class_labels",
+                            ]
+                        }
+                    )
                     for class_id, class_metrics in h_alpha_metrics["per_class_metrics"].items():
                         for metric_name, metric_value in class_metrics.items():
-                            wandb.log({f"metrics/h_alpha/class_{class_id}/{metric_name}": metric_value})
+                            if isinstance(metric_value, (str, dict)):
+                                continue
+                            self.experiment_logger.log_metrics(
+                                {f"metrics/h_alpha/class_{class_id}/{metric_name}": metric_value}
+                            )
                 self.metrics["h_alpha"] = h_alpha_metrics
 
                 cameron_metrics = compute_cameron_metrics(
                     image1=original_image,
                     image2=reconstruct_image,
                 )
-                if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                    wandb.log({f"metrics/cameron/{k}": v for k, v in cameron_metrics.items() 
-                               if k not in ["per_class_metrics", "confusion_matrix_raw", "confusion_matrix_normalized", "class_labels"]})
+                if self.experiment_logger.is_enabled():
+                    self.experiment_logger.log_metrics(
+                        {
+                            f"metrics/cameron/{k}": v
+                            for k, v in _numeric_metrics(cameron_metrics).items()
+                            if k
+                            not in [
+                                "per_class_metrics",
+                                "confusion_matrix_raw",
+                                "confusion_matrix_normalized",
+                                "class_labels",
+                            ]
+                        }
+                    )
                     for class_id, class_metrics in cameron_metrics["per_class_metrics"].items():
                         for metric_name, metric_value in class_metrics.items():
-                            wandb.log({f"metrics/cameron/class_{class_id}/{metric_name}": metric_value})
+                            if isinstance(metric_value, (str, dict)):
+                                continue
+                            self.experiment_logger.log_metrics(
+                                {f"metrics/cameron/class_{class_id}/{metric_name}": metric_value}
+                            )
                 self.metrics["cameron"] = cameron_metrics
 
             self.original_image = original_image
@@ -185,10 +238,10 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "dataset_split_visualization.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved dataset split visualization to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log(
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("dataset_split/visualization", fig)
+                self.experiment_logger.log_metrics(
                     {
-                        "dataset_split/visualization": wandb.Image(fig, caption="Dataset Split Visualization"),
                         "dataset_split/train_patches": len(train_indices),
                         "dataset_split/valid_patches": len(valid_indices),
                         "dataset_split/test_patches": len(test_indices) if test_indices else 0,
@@ -204,8 +257,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "reconstruction_error_analysis.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved reconstruction error analysis to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"reconstruction_error_analysis": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("reconstruction_error_analysis", fig)
             plt.close(fig)
 
         if self.cfg.get("mode") in ("full", "train", "retrain"):
@@ -219,8 +272,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "loss_curve.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved loss curve to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"loss_curve": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("loss_curve", fig)
             plt.close(fig)
 
         if self.cfg["data"].get("type").lower() == "polsar":
@@ -231,8 +284,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "pauli_decomposition.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved Pauli decomposition to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"pauli_decomposition": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("pauli_decomposition", fig)
             plt.close(fig)
 
             fig = plot_krogager_decomposition(
@@ -242,8 +295,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "krogager_decomposition.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved Krogager decomposition to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"krogager_decomposition": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("krogager_decomposition", fig)
             plt.close(fig)
 
             fig = plot_h_alpha_decomposition(
@@ -253,8 +306,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "h_alpha_decomposition.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved H/A decomposition to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"h_alpha_decomposition": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("h_alpha_decomposition", fig)
             plt.close(fig)
 
             fig = plot_h_alpha_plane(
@@ -264,8 +317,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "h_alpha_plane.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved H/Alpha plane to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"h_alpha_plane": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("h_alpha_plane", fig)
             plt.close(fig)
 
             fig = plot_classification_metrics(
@@ -284,8 +337,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "h_alpha_classification_metrics.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved H/Alpha classification metrics to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"h_alpha_classification_metrics": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("h_alpha_classification_metrics", fig)
             plt.close(fig)
 
             fig = plot_cameron_decomposition(
@@ -295,8 +348,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "cameron_decomposition.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved Cameron decomposition to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"cameron_decomposition": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("cameron_decomposition", fig)
             plt.close(fig)
 
             fig = plot_classification_metrics(
@@ -318,8 +371,8 @@ class ReconstructionExperiment(BaseExperiment):
             save_path = Path(self.logdir) / "cameron_classification_metrics.png"
             fig.savefig(save_path, dpi=300, bbox_inches="tight")
             logger.info(f"Saved Cameron classification metrics to {save_path}")
-            if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-                wandb.log({"cameron_classification_metrics": wandb.Image(fig)})
+            if self.experiment_logger.is_enabled():
+                self.experiment_logger.log_figure("cameron_classification_metrics", fig)
             plt.close(fig)
 
         ### Show reconstructions for test set ###
@@ -340,6 +393,6 @@ class ReconstructionExperiment(BaseExperiment):
         save_path = Path(self.logdir) / "reconstructions.png"
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
         logger.info(f"Saved reconstructions to {save_path}")
-        if self.wandb_log and hasattr(wandb, "run") and wandb.run:
-            wandb.log({"reconstructions": wandb.Image(fig)})
+        if self.experiment_logger.is_enabled():
+            self.experiment_logger.log_figure("reconstructions", fig)
         plt.close(fig)

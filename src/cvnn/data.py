@@ -1,6 +1,7 @@
 # src/cvnn/data.py
 
 # Standard library imports
+import os
 import pathlib
 import random
 import copy
@@ -30,7 +31,7 @@ def _parse_dataset_config(cfg: dict) -> dict:
 
     config = {
         "dataset_name": dataset_name,
-        "trainpath": cfg["data"]["dataset"]["trainpath"],
+        "trainpath": os.path.expandvars(cfg["data"]["dataset"]["trainpath"]),
         "has_labels": cfg["data"]["dataset"].get("has_labels"),
     }
 

@@ -7,7 +7,6 @@ from collections import defaultdict
 # Third-party imports
 import torch
 import torch.nn as nn
-import wandb
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 import numpy as np
@@ -276,6 +275,7 @@ def train_model(
     scheduler: Optional[Any] = None,
     start_epoch: int = 0,
     gumbel_experiment: Optional[Any] = None,
+    experiment_logger: Optional[Any] = None,
 ) -> Dict[str, List[float]]:
     """Run full training over epochs and return history of losses.
 
@@ -398,8 +398,8 @@ def train_model(
             step_on_batch=step_on_batch
         )
         
-        # 5. Log to wandb if initialized
-        if wandb.run:
+        # 5. Log to configured experiment backend
+        if experiment_logger and experiment_logger.is_enabled():
             # 1. Basic fixed metrics
             log_dict = {
                 "epoch": epoch,
@@ -425,7 +425,7 @@ def train_model(
             if gumbel_experiment and hasattr(gumbel_experiment, "current_gumbel_tau"):
                 log_dict["training/gumbel_tau"] = gumbel_experiment.current_gumbel_tau.item()
 
-            wandb.log(log_dict)
+            experiment_logger.log_metrics(log_dict, step=epoch)
 
         # 6. Update checkpoint with validation score
         checkpoint.update(valid_loss, epoch)

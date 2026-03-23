@@ -64,6 +64,8 @@ def load_config(config_path: Union[str, Path]) -> Dict[str, Any]:
         for parent in p.resolve().parents:
             if (parent / ".git").is_dir():
                 return parent
+            if (parent / "configs").is_dir() and (parent / "projects").is_dir():
+                return parent
         raise RuntimeError("Repository root with .git not found.")
 
     repo_root = _find_repo_root(Path(__file__))
