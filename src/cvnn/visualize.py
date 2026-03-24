@@ -32,6 +32,20 @@ from cvnn.data_processing import (
 
 logger = setup_logging(__name__)
 
+
+def _downsample_channel_first_image(
+    image: Optional[np.ndarray], max_side: int = 1024
+) -> Optional[np.ndarray]:
+    """Downsample large channel-first images for display-only plots."""
+    if image is None or image.ndim != 3:
+        return image
+
+    _, height, width = image.shape
+    step = max(1, int(np.ceil(max(height, width) / max_side)))
+    if step == 1:
+        return image
+    return image[:, ::step, ::step]
+
 def _display_img(img: np.ndarray, dataset_type: str, percentiles: Optional[Tuple[float, float]] = None) -> None:
     p1, p2 = None, None
     if dataset_type == "polsar":
@@ -376,8 +390,10 @@ def plot_pauli_decomposition(
     Returns:
         Pauli decomposition image normalized to uint8 range [0, 255]
     """    
+    image1 = _downsample_channel_first_image(image1)
     image1 = pauli_transform(image1)
     if image2 is not None:
+        image2 = _downsample_channel_first_image(image2)
         image2 = pauli_transform(image2)
     
     if image2 is not None:
@@ -409,8 +425,10 @@ def plot_krogager_decomposition(
     Returns:
         Krogager decomposition image normalized to uint8 range [0, 255]
     """
+    image1 = _downsample_channel_first_image(image1)
     image1 = krogager_transform(image1)
     if image2 is not None:
+        image2 = _downsample_channel_first_image(image2)
         image2 = krogager_transform(image2)
     if image2 is not None:
         num_cols = 2
@@ -462,8 +480,10 @@ def plot_h_alpha_decomposition(
         for i in h_alpha_class_info
     ]
     # Compute Pauli decomposition
+    image1 = _downsample_channel_first_image(image1, max_side=768)
     image1 = pauli_transform(image1)
     if image2 is not None:
+        image2 = _downsample_channel_first_image(image2, max_side=768)
         image2 = pauli_transform(image2)
 
     # Compute H-alpha classifications    
@@ -516,6 +536,8 @@ def plot_h_alpha_plane(
         9: {"color": "gray", "name": "Bragg surface"},
     }
     # Compute Pauli decomposition
+    image1 = _downsample_channel_first_image(image1, max_side=512)
+    image2 = _downsample_channel_first_image(image2, max_side=512)
     image1 = pauli_transform(image1)
     image2 = pauli_transform(image2)
 
@@ -612,8 +634,10 @@ def plot_cameron_decomposition(
     ]
 
     # Compute Cameron classifications
+    image1 = _downsample_channel_first_image(image1, max_side=768)
     image1 = cameron(image1)
     if image2 is not None:
+        image2 = _downsample_channel_first_image(image2, max_side=768)
         image2 = cameron(image2)
     if image2 is not None:
         num_cols = 2
@@ -975,12 +999,24 @@ def plot_reconstruction_error_analysis(
         axes = [axes]
 
     for ax, key in zip(axes, valid_keys):
-        data = errors[key]
+        data = np.asarray(errors[key]).ravel()
+        if data.size > 200_000:
+            rng = np.random.default_rng(0)
+            sample_idx = rng.choice(data.size, size=200_000, replace=False)
+            data = data[sample_idx]
         # Robust limits to ignore outliers
         low, high = np.percentile(data, [1, 99])
         data_filtered = data[(data >= low) & (data <= high)]
-        
-        sns.histplot(data_filtered, kde=True, ax=ax, color='purple', alpha=0.6)
+
+        use_kde = data_filtered.size <= 50_000
+        sns.histplot(
+            data_filtered,
+            kde=use_kde,
+            bins=100,
+            ax=ax,
+            color="purple",
+            alpha=0.6,
+        )
         ax.grid(True, alpha=0.2)
     return fig
 

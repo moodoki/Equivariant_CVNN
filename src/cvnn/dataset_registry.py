@@ -57,6 +57,17 @@ DATASET_TYPE_REGISTRY = {
         "ignore_index": None,
         "num_channels": 2,
     },
+    "Tel2Commrcial_v1": {
+        "type": "polsar",
+        "supports_full_image_reconstruction": True,
+        "valid_layer_modes": ["complex", "split", "real"],
+        "valid_real_pipelines": ["complex_amplitude_real", "complex_dual_real"],
+        "invalid_real_pipelines": ["real_real"],
+        "default_real_pipeline": "complex_dual_real",
+        "has_labels": False,
+        "ignore_index": None,
+        "num_channels": 3,
+    },
 }
 
 def get_dataset_info(dataset_name: str) -> Dict[str, Any]:

@@ -20,6 +20,7 @@ from cvnn.dataset_registry import get_dataset_info
 from cvnn.data_splitting import get_label_based_split_indices
 from cvnn.datasets import Sethi, GenericDatasetWrapper
 from cvnn.data_statistics import compute_dataset_statistics
+from cvnn.tel2commercial import Tel2Commrcial_v1
 
 # module-level logger
 logger = setup_logging(__name__)
@@ -35,16 +36,24 @@ def _parse_dataset_config(cfg: dict) -> dict:
         "has_labels": cfg["data"]["dataset"].get("has_labels"),
     }
 
-    if dataset_name in ["ALOSDataset", "Sethi", "PolSFDataset", "Bretigny"] and "patch_size" in cfg["data"]["dataset"]:
+    if dataset_name in ["ALOSDataset", "Sethi", "PolSFDataset", "Bretigny", "Tel2Commrcial_v1"] and "patch_size" in cfg["data"]["dataset"]:
         config["patch_size"] = cfg["data"]["dataset"]["patch_size"]
         config["patch_stride"] = cfg["data"]["dataset"]["patch_stride"]
 
     # Add crop coordinates if available
-    if dataset_name in ["ALOSDataset", "Sethi"] and "crop_coordinates" in cfg["data"]["dataset"]:
+    if dataset_name in ["ALOSDataset", "Sethi", "Tel2Commrcial_v1"] and "crop_coordinates" in cfg["data"]["dataset"]:
         config["crop_coordinates"] = (
             (cfg["data"]["dataset"]["crop_coordinates"]["start_row"], cfg["data"]["dataset"]["crop_coordinates"]["start_col"]),
             (cfg["data"]["dataset"]["crop_coordinates"]["end_row"], cfg["data"]["dataset"]["crop_coordinates"]["end_col"]),
         )
+
+    if dataset_name == "Tel2Commrcial_v1":
+        config["output_mode"] = cfg["data"]["dataset"].get("output_mode", "three_channel")
+        config["output_polarizations"] = cfg["data"]["dataset"].get("output_polarizations")
+        config["scene_names"] = cfg["data"]["dataset"].get("scene_names")
+        config["product_names"] = cfg["data"]["dataset"].get("product_names")
+        config["raw_scale_factor"] = cfg["data"]["dataset"].get("raw_scale_factor", "percentile")
+        config["raw_scale_percentile"] = cfg["data"]["dataset"].get("raw_scale_percentile", 99.5)
     
     return config
 
@@ -120,6 +129,23 @@ def _create_dataset(cfg: dict, transform: Optional[Any] = None, dataset_config: 
         return S1SLC(
             root=dataset_config["trainpath"], transform=transform, lazy_loading=False
         )
+    elif dataset_name == "Tel2Commrcial_v1":
+        return Tel2Commrcial_v1(
+            root=dataset_config["trainpath"],
+            transform=transform,
+            patch_size=(dataset_config["patch_size"], dataset_config["patch_size"]),
+            patch_stride=(
+                dataset_config["patch_stride"],
+                dataset_config["patch_stride"],
+            ),
+            crop_coordinates=dataset_config.get("crop_coordinates"),
+            output_mode=dataset_config.get("output_mode", "three_channel"),
+            output_polarizations=dataset_config.get("output_polarizations"),
+            scene_names=dataset_config.get("scene_names"),
+            product_names=dataset_config.get("product_names"),
+            raw_scale_factor=dataset_config.get("raw_scale_factor", "percentile"),
+            raw_scale_percentile=dataset_config.get("raw_scale_percentile", 99.5),
+        )
     else:
         raise ValueError(f"Unknown dataset name: {dataset_name}")
 
@@ -171,6 +197,14 @@ def validate_and_correct_config(cfg: dict) -> dict:
     cfg["data"]["type"] = dataset_info["type"]
 
     cfg["data"]["num_channels"] = dataset_info["num_channels"]
+    if dataset_name == "Tel2Commrcial_v1":
+        output_polarizations = cfg["data"]["dataset"].get("output_polarizations")
+        if output_polarizations:
+            cfg["data"]["num_channels"] = len(output_polarizations)
+        elif cfg["data"]["dataset"].get("output_mode", "three_channel") == "quad":
+            cfg["data"]["num_channels"] = 4
+        else:
+            cfg["data"]["num_channels"] = 3
     
     if dataset_info.get("ignore_index") is not None:
         cfg["data"]["ignore_index"] = dataset_info["ignore_index"]
@@ -405,9 +439,12 @@ def get_full_image_dataloader(cfg: dict, use_cuda: bool) -> Tuple[DataLoader, in
         nsamples_per_cols = base_dataset.nsamples_per_cols
         nsamples_per_rows = base_dataset.nsamples_per_rows
 
-    elif dataset_config["dataset_name"] in ["ALOSDataset", "PolSFDataset"]:
+    elif dataset_config["dataset_name"] in ["ALOSDataset", "PolSFDataset", "Tel2Commrcial_v1"]:
         if "crop_coordinates" not in dataset_config:
-            dataset_config["crop_coordinates"] = ((0, 0), (9000, 5000))
+            if dataset_config["dataset_name"] == "Tel2Commrcial_v1":
+                dataset_config["crop_coordinates"] = None
+            else:
+                dataset_config["crop_coordinates"] = ((0, 0), (9000, 5000))
             
         base_dataset = _create_dataset(cfg, input_transform, dataset_config)
         
@@ -417,6 +454,9 @@ def get_full_image_dataloader(cfg: dict, use_cuda: bool) -> Tuple[DataLoader, in
         elif dataset_config["dataset_name"] == "PolSFDataset":
             nsamples_per_cols = base_dataset.alos_dataset.nsamples_per_cols
             nsamples_per_rows = base_dataset.alos_dataset.nsamples_per_rows
+        elif dataset_config["dataset_name"] == "Tel2Commrcial_v1":
+            nsamples_per_cols = base_dataset.nsamples_per_cols
+            nsamples_per_rows = base_dataset.nsamples_per_rows
             
     elif dataset_config["dataset_name"] == "Sethi":
         if "crop_coordinates" not in dataset_config:
